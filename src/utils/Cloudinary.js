@@ -10,6 +10,7 @@ cloudinary.config({
 const uploadOnCloudinary = async (localFilePath, retries = 3) => {
   try {
     if (!localFilePath) return null;
+    console.log("Cloudinary upload Start");
 
     // upload the file on cloudinary
     const response = await cloudinary.uploader.upload(localFilePath, {
@@ -17,11 +18,12 @@ const uploadOnCloudinary = async (localFilePath, retries = 3) => {
     });
 
     // File has been uploaded successfully
-    // console.log("File has been uploaded successfully", response.url);
+    console.log("File has been uploaded successfully", response.url);
 
     fs.unlinkSync(localFilePath);
     return response;
   } catch (err) {
+    console.log("Cloudinary upload Failed", err);
     if (retries > 0) {
       await uploadOnCloudinary(localFilePath, retries - 1); // if failed to upload request again
     }

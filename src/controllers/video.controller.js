@@ -7,38 +7,132 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { deleteInCloudinary, uploadOnCloudinary } from "../utils/cloudinary.js";
 
 const getAllVideos = asyncHandler(async (req, res) => {
-  const { page = 1, limit = 10, query, sortBy, sortType, userId } = req.query;
-  //TODO: get all videos based on query, sort, pagination
+  const {
+    page = 1,
+    limit = 10,
+    query = "",
+    sortBy = "createdAt",
+    sortType = 1,
+  } = req.query;
+  const userId = req.user?._id;
+
+  // Log to check incoming query and userId
+  console.log("query", query, "userId", userId);
+
+  let pipeline = [
+    {
+      $match: {
+        $or: [
+          {
+            title: { $regex: query, $options: "i" }, // Match based on title
+          },
+          {
+            description: { $regex: query, $options: "i" }, // Match based on description
+          },
+        ],
+        ...(userId && { owner: new mongoose.Types.ObjectId(userId) }), // Match owner only if userId exists
+      },
+    },
+    // Lookup the owner field (user details)
+    {
+      $lookup: {
+        from: "videos", // Assuming the user collection is called 'users'
+        localField: "owner",
+        foreignField: "_id",
+        as: "owner",
+        pipeline: [
+          {
+            $project: {
+              _id: 1,
+              fullName: 1,
+              username: 1,
+              avatar: 1,
+            },
+          },
+        ],
+      },
+    },
+    {
+      $addFields: {
+        owner: {
+          $first: "$owner", // Add first element of owner to document
+        },
+      },
+    },
+    {
+      $sort: { [sortBy]: sortType }, // Sort videos based on query param
+    },
+  ];
+
+  try {
+    // Set pagination options
+    const options = {
+      page: parseInt(page),
+      limit: parseInt(limit),
+      customLabels: {
+        totalDocs: "totalVideos",
+        docs: "videos",
+      },
+    };
+
+    // Fetch videos with aggregation and pagination
+    const result = await Video.aggregatePaginate(
+      Video.aggregate(pipeline),
+      options
+    );
+
+    if (result?.videos?.length === 0) {
+      return res.status(404).json(new ApiResponse(404, {}, "No Videos Found"));
+    }
+
+    console.log(result);
+    return res
+      .status(200)
+      .json(new ApiResponse(200, result, "Videos fetched successfully"));
+  } catch (error) {
+    console.error(error.message);
+    return res
+      .status(500)
+      .json(
+        new ApiError(500, {}, "Internal server error in video aggregation")
+      );
+  }
 });
 
 const publishAVideo = asyncHandler(async (req, res) => {
   const { title, description } = req.body;
   // TODO: get video, upload to cloudinary, create video
+  console.log(description);
 
-  if (!title && !description) {
+  if (!title || !description) {
     throw new ApiError(400, "Title and description required ");
   }
 
-  const videoFilePath = req.files?.videoFile[0].path;
-  const thumbnailPath = req.files?.thumbnail[0].path;
+  const videoFilePath = req.files?.videoFile?.[0].path;
+  const thumbnailPath = req.files?.thumbnail?.[0].path;
 
-  if (!videoFilePath && !thumbnailPath) {
+  if (!videoFilePath || !thumbnailPath) {
     throw new ApiError(400, "Video file and thumbnail required");
   }
+  console.log(videoFilePath, thumbnailPath);
+
+  console.log("Multer uploaded files");
 
   const videoPath = await uploadOnCloudinary(videoFilePath);
-  const thumbnail = await uploadOnCloudinary(thumbnailPath);
+  const thumbnailFilePath = await uploadOnCloudinary(thumbnailPath);
 
-  if (!videoPath.url && !thumbnail.url) {
+  if (!videoPath.url || !thumbnailFilePath.url) {
     throw new ApiError(500, "Server failed to upload video and thumbnail");
   }
 
+  // console.log("videoFile", videoPath.url, "thumbnail", thumbnail.url);
+
   const savedVideo = await Video.create({
-    videoFile: videoFile.url,
-    thumbnail: thumbnail.url,
+    videoFile: videoPath.url,
+    thumbnail: thumbnailFilePath.url,
     title,
-    description,
-    duration: videoFile.duration,
+    description: description,
+    duration: videoPath.duration,
     owner: req.user?._id,
   });
 
